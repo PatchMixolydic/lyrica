@@ -1,4 +1,4 @@
-//! Phantasmically simple MIDI handling.
+//! Phantasmically simple MIDI file handling.
 //!
 //! Quoth [Merriam-Webster](https://www.merriam-webster.com/dictionary/phantasmic):
 //! > Definition of phantasm
@@ -22,7 +22,7 @@
 #![warn(clippy::single_char_lifetime_names)]
 
 use midly::{live::LiveEvent, MetaMessage, Smf, Timing, TrackEvent, TrackEventKind};
-use std::{collections::VecDeque, vec, time::Instant};
+use std::{collections::VecDeque, time::Instant, vec};
 
 pub use midir::{MidiOutput, MidiOutputConnection, MidiOutputPort};
 
@@ -92,14 +92,8 @@ impl<'file> MidiFile<'file> {
             for (ticks_since_last_update, track) in tracks {
                 *ticks_since_last_update += 1;
 
-                loop {
-                    let event = match track.front() {
-                        Some(event) => event,
-                        // Out of events
-                        None => break,
-                    };
-
-                    if u32::from(event.delta) > *ticks_since_last_update {
+                while let Some(event) = track.front() {
+                    if event.delta > *ticks_since_last_update {
                         // Not ready to proceed yet
                         break;
                     }
@@ -125,18 +119,16 @@ impl<'file> MidiFile<'file> {
                             event_bytes.push(0xF0);
                             event_bytes.extend_from_slice(message);
                             connection.send(&event_bytes).unwrap();
-                        },
+                        }
 
                         TrackEventKind::Escape(_) => todo!("escape events are unhandled"),
 
-                        TrackEventKind::Meta(message) => match message {
-                            MetaMessage::Tempo(tempo) => {
+                        TrackEventKind::Meta(message) => {
+                            if let MetaMessage::Tempo(tempo) = message {
                                 self.microseconds_per_tick =
                                     u32::from(tempo) as f64 / self.ticks_per_beat as f64;
                             }
-
-                            _ => {}
-                        },
+                        }
                     }
                 }
             }

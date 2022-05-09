@@ -1,5 +1,5 @@
 # Lyrica
-Phantasmically simple MIDI handling.
+Phantasmically simple MIDI file handling.
 
 Quoth [Merriam-Webster](https://www.merriam-webster.com/dictionary/phantasmic):
 > Definition of phantasm

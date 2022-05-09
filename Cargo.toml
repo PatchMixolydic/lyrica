@@ -1,6 +1,6 @@
 [package]
 name = "lyrica"
-description = "Phantasmically simple MIDI handling"
+description = "Phantasmically simple MIDI file handling"
 version = "0.1.0"
 edition = "2021"
 
