@@ -1,0 +1,10 @@
+[package]
+name = "lyrica"
+description = "Phantasmically simple MIDI handling"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+midir = "0.7.0"
+midly = "0.5.2"
+thiserror = "1.0.31"
