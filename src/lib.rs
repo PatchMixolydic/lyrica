@@ -195,9 +195,9 @@ impl<'file> MidiPlayer<'file> {
         }
     }
 
-    pub fn set_midi_file(&mut self, midi_file: MidiFile<'file>) {
+    pub fn set_midi_file(&mut self, midi_file: Option<MidiFile<'file>>) {
         all_sound_off(&mut self.connection);
-        self.maybe_midi_file = Some(midi_file);
+        self.maybe_midi_file = midi_file;
     }
 
     pub fn set_paused(&mut self, paused: bool) {

@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let file = fs::read(filename)?;
     let midi_file = MidiFile::from_bytes(&file);
     let mut player = MidiPlayer::new(connection);
-    player.set_midi_file(midi_file);
+    player.set_midi_file(Some(midi_file));
 
     loop {
         player.update();
