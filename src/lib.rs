@@ -21,10 +21,16 @@
 //! [Now how much do you think Lyrica is worth? ***Don't answer!***](https://www.youtube.com/watch?v=DgJS2tQPGKQ)
 #![warn(clippy::single_char_lifetime_names)]
 
-use midly::{live::LiveEvent, MetaMessage, Smf, Timing, TrackEvent, TrackEventKind};
+use midly::{
+    live::LiveEvent,
+    num::{u4, u7},
+    MetaMessage, MidiMessage, Smf, Timing, TrackEvent, TrackEventKind,
+};
 use std::{collections::VecDeque, time::Instant, vec};
 
 pub use midir::{MidiOutput, MidiOutputConnection, MidiOutputPort};
+
+const ALL_SOUND_OFF_CC: u7 = u7::new(123);
 
 enum MidiFileFormat {
     Sequential { current: usize },
@@ -51,6 +57,7 @@ pub struct MidiFile<'file> {
     format: MidiFileFormat,
     tracks: Vec<VecDeque<TrackEvent<'file>>>,
     ticks_since_last_update: Vec<u32>,
+    paused: bool,
 }
 
 impl<'file> MidiFile<'file> {
@@ -77,12 +84,40 @@ impl<'file> MidiFile<'file> {
             format: parsed_file.header.format.into(),
             tracks,
             ticks_since_last_update,
+            paused: false,
+        }
+    }
+
+    pub fn set_paused(&mut self, paused: bool, connection: &mut MidiOutputConnection) {
+        self.paused = paused;
+        let mut event_bytes = Vec::new();
+
+        if paused {
+            // send an All Sound Off message to all channels
+            for i in 0..16 {
+                let event = LiveEvent::Midi {
+                    channel: u4::new(i),
+                    message: MidiMessage::Controller {
+                        controller: ALL_SOUND_OFF_CC,
+                        value: u7::new(0),
+                    },
+                };
+
+                event.write_std(&mut event_bytes).unwrap();
+                connection.send(&event_bytes).unwrap();
+                event_bytes.clear();
+            }
         }
     }
 
     pub fn update(&mut self, delta_time: f64, connection: &mut MidiOutputConnection) {
+        if self.paused {
+            return;
+        }
+
         self.timer += delta_time;
 
+        // TODO: assumes `format` is `Parallel`
         while self.timer > self.microseconds_per_tick {
             let tracks = self
                 .ticks_since_last_update
@@ -151,6 +186,12 @@ impl<'file> MidiPlayer<'file> {
             connection,
             last_update_time: Instant::now(),
         }
+    }
+
+    pub fn set_paused(&mut self, paused: bool) {
+        self.midi_file.set_paused(paused, &mut self.connection);
+        // Don't suddenly jump ahead when unpausing.
+        self.last_update_time = Instant::now();
     }
 
     pub fn update(&mut self) {
