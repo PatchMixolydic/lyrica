@@ -15,7 +15,7 @@
 //! * Play
 //! * Pause
 //! * Loop
-//! * And, can you believe it? Switch tracks!
+//! * Switch to a different file
 //!
 //! ... all without blocking the thread!
 //! [Now how much do you think Lyrica is worth? ***Don't answer!***](https://www.youtube.com/watch?v=DgJS2tQPGKQ)
@@ -186,6 +186,10 @@ impl<'file> MidiPlayer<'file> {
             connection,
             last_update_time: Instant::now(),
         }
+    }
+
+    pub fn set_midi_file(&mut self, midi_file: MidiFile<'file>) {
+        self.midi_file = midi_file;
     }
 
     pub fn set_paused(&mut self, paused: bool) {
