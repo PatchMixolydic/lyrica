@@ -61,7 +61,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let connection = midi_output.connect(&midi_ports[port_number], "lyrica-play")?;
     let file = fs::read(filename)?;
     let midi_file = MidiFile::from_bytes(&file);
-    let mut player = MidiPlayer::new(midi_file, connection);
+    let mut player = MidiPlayer::new(connection);
+    player.set_midi_file(midi_file);
 
     loop {
         player.update();

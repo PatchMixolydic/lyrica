@@ -13,9 +13,9 @@
 //!
 //! Here's what Lyrica can do with your MIDI files:
 //! * Play
-//! * Pause
-//! * Loop
-//! * Switch to a different file
+//! * Pause!
+//! * Loop!!
+//! * Switch to a different file!!!
 //!
 //! ... all without blocking the thread!
 //! [Now how much do you think Lyrica is worth? ***Don't answer!***](https://www.youtube.com/watch?v=DgJS2tQPGKQ)
@@ -181,15 +181,15 @@ impl<'file> MidiFile<'file> {
 }
 
 pub struct MidiPlayer<'file> {
-    midi_file: MidiFile<'file>,
+    maybe_midi_file: Option<MidiFile<'file>>,
     connection: MidiOutputConnection,
     last_update_time: Instant,
 }
 
 impl<'file> MidiPlayer<'file> {
-    pub fn new(midi_file: MidiFile<'file>, connection: MidiOutputConnection) -> Self {
+    pub fn new(connection: MidiOutputConnection) -> Self {
         Self {
-            midi_file,
+            maybe_midi_file: None,
             connection,
             last_update_time: Instant::now(),
         }
@@ -197,11 +197,14 @@ impl<'file> MidiPlayer<'file> {
 
     pub fn set_midi_file(&mut self, midi_file: MidiFile<'file>) {
         all_sound_off(&mut self.connection);
-        self.midi_file = midi_file;
+        self.maybe_midi_file = Some(midi_file);
     }
 
     pub fn set_paused(&mut self, paused: bool) {
-        self.midi_file.set_paused(paused, &mut self.connection);
+        if let Some(midi_file) = &mut self.maybe_midi_file {
+            midi_file.set_paused(paused, &mut self.connection);
+        }
+
         // Don't suddenly jump ahead when unpausing.
         self.last_update_time = Instant::now();
     }
@@ -209,7 +212,11 @@ impl<'file> MidiPlayer<'file> {
     pub fn update(&mut self) {
         let now = Instant::now();
         let delta_time = now.duration_since(self.last_update_time).as_micros() as f64;
-        self.midi_file.update(delta_time, &mut self.connection);
+
+        if let Some(midi_file) = &mut self.maybe_midi_file {
+            midi_file.update(delta_time, &mut self.connection);
+        }
+
         self.last_update_time = now;
     }
 }
