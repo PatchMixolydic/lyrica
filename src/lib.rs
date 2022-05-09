@@ -50,10 +50,11 @@ impl From<midly::Format> for MidiFileFormat {
     }
 }
 
+/// Sends an [All Sound Off](http://midi.teragonaudio.com/tech/midispec/ntnoff.htm)
+/// message to all channels.
 fn all_sound_off(connection: &mut MidiOutputConnection) {
     let mut event_bytes = Vec::new();
 
-    // send an All Sound Off message to all channels
     for i in 0..16 {
         let event = LiveEvent::Midi {
             channel: u4::new(i),
