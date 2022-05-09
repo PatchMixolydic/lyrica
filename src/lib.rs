@@ -19,6 +19,7 @@
 //!
 //! ... all without blocking the thread!
 //! [Now how much do you think Lyrica is worth? ***Don't answer!***](https://www.youtube.com/watch?v=DgJS2tQPGKQ)
+
 #![warn(clippy::single_char_lifetime_names)]
 
 use midly::{
@@ -46,6 +47,25 @@ impl From<midly::Format> for MidiFileFormat {
 
             midly::Format::Parallel => Self::Parallel,
         }
+    }
+}
+
+fn all_sound_off(connection: &mut MidiOutputConnection) {
+    let mut event_bytes = Vec::new();
+
+    // send an All Sound Off message to all channels
+    for i in 0..16 {
+        let event = LiveEvent::Midi {
+            channel: u4::new(i),
+            message: MidiMessage::Controller {
+                controller: ALL_SOUND_OFF_CC,
+                value: u7::new(0),
+            },
+        };
+
+        event.write_std(&mut event_bytes).unwrap();
+        connection.send(&event_bytes).unwrap();
+        event_bytes.clear();
     }
 }
 
@@ -90,23 +110,9 @@ impl<'file> MidiFile<'file> {
 
     pub fn set_paused(&mut self, paused: bool, connection: &mut MidiOutputConnection) {
         self.paused = paused;
-        let mut event_bytes = Vec::new();
 
         if paused {
-            // send an All Sound Off message to all channels
-            for i in 0..16 {
-                let event = LiveEvent::Midi {
-                    channel: u4::new(i),
-                    message: MidiMessage::Controller {
-                        controller: ALL_SOUND_OFF_CC,
-                        value: u7::new(0),
-                    },
-                };
-
-                event.write_std(&mut event_bytes).unwrap();
-                connection.send(&event_bytes).unwrap();
-                event_bytes.clear();
-            }
+            all_sound_off(connection);
         }
     }
 
@@ -189,6 +195,7 @@ impl<'file> MidiPlayer<'file> {
     }
 
     pub fn set_midi_file(&mut self, midi_file: MidiFile<'file>) {
+        all_sound_off(&mut self.connection);
         self.midi_file = midi_file;
     }
 
