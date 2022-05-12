@@ -141,6 +141,10 @@ impl MidiFile {
         self.loop_point = loop_point;
     }
 
+    fn at_end_of_track(&self, track_id: usize) -> bool {
+        self.progress[track_id].next_event >= self.tracks[track_id].len()
+    }
+
     /// Like [`Self::is_finished`], but ignores the loop point.
     fn at_end_of_file(&self) -> bool {
         match self.format {
@@ -229,7 +233,7 @@ impl MidiFile {
                 MidiFileFormat::Sequential { current } => {
                     self.update_track(current, connection);
 
-                    if self.tracks[current].is_empty() {
+                    if self.at_end_of_track(current) {
                         // This track is finished; play the next track.
                         // If this is the last track, this will cause
                         // `current` to go out of the range of valid track
