@@ -222,7 +222,14 @@ impl MidiFile {
                     self.update_track(current, connection);
 
                     if self.tracks[current].is_empty() {
-                        // This track is finished; play the next track
+                        // This track is finished; play the next track.
+                        // If this is the last track, this will cause
+                        // `current` to go out of the range of valid track
+                        // indices. This will make `Self::is_finished`
+                        // return `true`, skipping any future updates and
+                        // avoiding "index out of bounds" panics.
+                        // TODO: this will have to reset if looping is
+                        // enabled
                         self.format = MidiFileFormat::Sequential {
                             current: current + 1,
                         };
