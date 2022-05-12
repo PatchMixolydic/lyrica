@@ -187,7 +187,7 @@ impl MidiFile {
     }
 
     /// Like [`Self::is_finished`], but ignores the loop point.
-    fn at_end_of_track(&self) -> bool {
+    fn at_end_of_file(&self) -> bool {
         match self.format {
             MidiFileFormat::Sequential { current } => self.tracks.len() <= current,
 
@@ -204,7 +204,7 @@ impl MidiFile {
             return false;
         }
 
-        self.at_end_of_track()
+        self.at_end_of_file()
     }
 
     /// Seek to the given time in seconds.
@@ -260,12 +260,6 @@ impl MidiFile {
                 OwnedTrackEventKind::InessentialMeta => {}
             }
         }
-
-        if self.at_end_of_track() {
-            if let Some(loop_point) = self.loop_point {
-                self.seek_to(loop_point, connection);
-            }
-        }
     }
 
     pub fn update(&mut self, delta_time: f64, connection: &mut MidiOutputConnection) {
@@ -299,6 +293,12 @@ impl MidiFile {
                     for track_id in 0..self.tracks.len() {
                         self.update_track(track_id, connection);
                     }
+                }
+            }
+
+            if self.at_end_of_file() {
+                if let Some(loop_point) = self.loop_point {
+                    self.seek_to(loop_point, connection);
                 }
             }
 
