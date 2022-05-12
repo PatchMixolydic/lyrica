@@ -24,7 +24,7 @@
 
 use midly::{
     live::LiveEvent,
-    num::{u4, u7},
+    num::{u24, u28, u4, u7},
     MetaMessage, MidiMessage, Smf, Timing, TrackEvent, TrackEventKind,
 };
 use std::{collections::VecDeque, time::Instant, vec};
@@ -50,6 +50,56 @@ impl From<midly::Format> for MidiFileFormat {
     }
 }
 
+enum OwnedTrackEventKind {
+    ToSynth(Vec<u8>),
+    Tempo(u24),
+    InessentialMeta,
+}
+
+impl<'file> From<TrackEventKind<'file>> for OwnedTrackEventKind {
+    fn from(event: TrackEventKind<'file>) -> Self {
+        match event {
+            TrackEventKind::Midi { channel, message } => {
+                let event = LiveEvent::Midi { channel, message };
+                let mut event_bytes = Vec::new();
+                event.write_std(&mut event_bytes).unwrap();
+                Self::ToSynth(event_bytes)
+            }
+
+            TrackEventKind::SysEx(message) => {
+                // converting to a `LiveEvent` won't work for split SysEx,
+                // so let's do our best! `message` is missing a leading 0xF0,
+                // so we need to put it back
+                let mut event_bytes = Vec::with_capacity(message.len() + 1);
+                event_bytes.push(0xF0);
+                event_bytes.extend_from_slice(message);
+                Self::ToSynth(event_bytes)
+            }
+
+            TrackEventKind::Escape(_) => todo!("MIDI escape events are unhandled"),
+
+            TrackEventKind::Meta(event) => match event {
+                MetaMessage::Tempo(tempo) => Self::Tempo(tempo),
+                _ => Self::InessentialMeta,
+            },
+        }
+    }
+}
+
+struct OwnedTrackEvent {
+    delta: u28,
+    kind: OwnedTrackEventKind,
+}
+
+impl<'file> From<TrackEvent<'file>> for OwnedTrackEvent {
+    fn from(event: TrackEvent<'file>) -> Self {
+        Self {
+            delta: event.delta,
+            kind: event.kind.into(),
+        }
+    }
+}
+
 /// Sends an [All Sound Off](http://midi.teragonaudio.com/tech/midispec/ntnoff.htm)
 /// message to all channels.
 fn all_sound_off(connection: &mut MidiOutputConnection) {
@@ -70,19 +120,19 @@ fn all_sound_off(connection: &mut MidiOutputConnection) {
     }
 }
 
-pub struct MidiFile<'file> {
+pub struct MidiFile {
     ticks_per_beat: u16,
     // borrowed for life from `nodi`
     microseconds_per_tick: f64,
     timer: f64,
     format: MidiFileFormat,
-    tracks: Vec<VecDeque<TrackEvent<'file>>>,
+    tracks: Vec<VecDeque<OwnedTrackEvent>>,
     ticks_since_last_update: Vec<u32>,
     paused: bool,
 }
 
-impl<'file> MidiFile<'file> {
-    pub fn from_bytes(bytes: &'file [u8]) -> Self {
+impl MidiFile {
+    pub fn from_bytes(bytes: &[u8]) -> Self {
         let parsed_file = Smf::parse(bytes).unwrap();
 
         let ticks_per_beat = match parsed_file.header.timing {
@@ -90,10 +140,16 @@ impl<'file> MidiFile<'file> {
             Timing::Timecode(_, _) => todo!("timecode timing is unimplemented"),
         };
 
-        let tracks: Vec<VecDeque<TrackEvent<'file>>> = parsed_file
+        // This looks like this performs far too many allocations, but
+        // in the optimal case, the parsing library would make most of
+        // the allocations here. There are only `tracks.len()` + 1 extra allocations:
+        // `tracks.len()` to collect into `VecDeque`s, and one to collect into
+        // a `Vec`. If the parsing library also used `Vec<VecDeque<_>>`, this would
+        // need no extra allocations.
+        let tracks: Vec<VecDeque<OwnedTrackEvent>> = parsed_file
             .tracks
             .into_iter()
-            .map(FromIterator::from_iter)
+            .map(|track| track.into_iter().map(OwnedTrackEvent::from).collect())
             .collect();
 
         let ticks_since_last_update = vec![0; tracks.len()];
@@ -145,32 +201,16 @@ impl<'file> MidiFile<'file> {
                     *ticks_since_last_update = 0;
 
                     match event.kind {
-                        TrackEventKind::Midi { channel, message } => {
-                            let event = LiveEvent::Midi { channel, message };
-                            let mut event_bytes = Vec::new();
-                            event.write_std(&mut event_bytes).unwrap();
+                        OwnedTrackEventKind::ToSynth(event_bytes) => {
                             connection.send(&event_bytes).unwrap();
                         }
 
-                        TrackEventKind::SysEx(message) => {
-                            // converting to a `LiveEvent` won't work for split SysEx,
-                            // so let's do our best! `message` is missing a leading 0xF0,
-                            // so we need to put it back
-                            // TODO: allocation here
-                            let mut event_bytes = Vec::with_capacity(message.len() + 1);
-                            event_bytes.push(0xF0);
-                            event_bytes.extend_from_slice(message);
-                            connection.send(&event_bytes).unwrap();
+                        OwnedTrackEventKind::Tempo(tempo) => {
+                            self.microseconds_per_tick =
+                                u32::from(tempo) as f64 / self.ticks_per_beat as f64;
                         }
 
-                        TrackEventKind::Escape(_) => todo!("escape events are unhandled"),
-
-                        TrackEventKind::Meta(message) => {
-                            if let MetaMessage::Tempo(tempo) = message {
-                                self.microseconds_per_tick =
-                                    u32::from(tempo) as f64 / self.ticks_per_beat as f64;
-                            }
-                        }
+                        OwnedTrackEventKind::InessentialMeta => {}
                     }
                 }
             }
@@ -180,13 +220,13 @@ impl<'file> MidiFile<'file> {
     }
 }
 
-pub struct MidiPlayer<'file> {
-    maybe_midi_file: Option<MidiFile<'file>>,
+pub struct MidiPlayer {
+    maybe_midi_file: Option<MidiFile>,
     connection: MidiOutputConnection,
     last_update_time: Instant,
 }
 
-impl<'file> MidiPlayer<'file> {
+impl MidiPlayer {
     pub fn new(connection: MidiOutputConnection) -> Self {
         Self {
             maybe_midi_file: None,
@@ -195,7 +235,7 @@ impl<'file> MidiPlayer<'file> {
         }
     }
 
-    pub fn set_midi_file(&mut self, midi_file: Option<MidiFile<'file>>) {
+    pub fn set_midi_file(&mut self, midi_file: Option<MidiFile>) {
         all_sound_off(&mut self.connection);
         self.maybe_midi_file = midi_file;
     }
