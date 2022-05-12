@@ -64,11 +64,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut player = MidiPlayer::new(connection);
     player.set_midi_file(Some(midi_file));
 
-    loop {
+    while !player.is_finished() {
         player.update();
         // TODO: Not entirely sure why this is needed, but without this, playback freezes
         // after the first note. Might be because `update` is executed so fast that
         // my slipshod code can't handle it.
         thread::sleep(Duration::from_micros(1));
     }
+
+    Ok(())
 }

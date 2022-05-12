@@ -76,7 +76,7 @@ impl<'file> From<TrackEventKind<'file>> for OwnedTrackEventKind {
                 Self::ToSynth(event_bytes)
             }
 
-            TrackEventKind::Escape(_) => todo!("MIDI escape events are unhandled"),
+            TrackEventKind::Escape(_) => todo!("MIDI escape events are unimplemented"),
 
             TrackEventKind::Meta(event) => match event {
                 MetaMessage::Tempo(tempo) => Self::Tempo(tempo),
@@ -173,8 +173,43 @@ impl MidiFile {
         }
     }
 
+    pub fn is_finished(&self) -> bool {
+        match self.format {
+            MidiFileFormat::Sequential { current } => self.tracks.len() <= current,
+            MidiFileFormat::Parallel => self.tracks.iter().all(|track| track.is_empty()),
+        }
+    }
+
+    fn update_track(&mut self, track_id: usize, connection: &mut MidiOutputConnection) {
+        self.ticks_since_last_update[track_id] += 1;
+
+        while let Some(event) = self.tracks[track_id].front() {
+            if event.delta > self.ticks_since_last_update[track_id] {
+                // Not ready to proceed yet
+                break;
+            }
+
+            // let's remove the event now
+            let event = self.tracks[track_id].pop_front().unwrap();
+            self.ticks_since_last_update[track_id] = 0;
+
+            match event.kind {
+                OwnedTrackEventKind::ToSynth(event_bytes) => {
+                    connection.send(&event_bytes).unwrap();
+                }
+
+                OwnedTrackEventKind::Tempo(tempo) => {
+                    self.microseconds_per_tick =
+                        u32::from(tempo) as f64 / self.ticks_per_beat as f64;
+                }
+
+                OwnedTrackEventKind::InessentialMeta => {}
+            }
+        }
+    }
+
     pub fn update(&mut self, delta_time: f64, connection: &mut MidiOutputConnection) {
-        if self.paused {
+        if self.paused || self.is_finished() {
             return;
         }
 
@@ -182,35 +217,21 @@ impl MidiFile {
 
         // TODO: assumes `format` is `Parallel`
         while self.timer > self.microseconds_per_tick {
-            let tracks = self
-                .ticks_since_last_update
-                .iter_mut()
-                .zip(self.tracks.iter_mut());
+            match self.format {
+                MidiFileFormat::Sequential { current } => {
+                    self.update_track(current, connection);
 
-            for (ticks_since_last_update, track) in tracks {
-                *ticks_since_last_update += 1;
-
-                while let Some(event) = track.front() {
-                    if event.delta > *ticks_since_last_update {
-                        // Not ready to proceed yet
-                        break;
+                    if self.tracks[current].is_empty() {
+                        // This track is finished; play the next track
+                        self.format = MidiFileFormat::Sequential {
+                            current: current + 1,
+                        };
                     }
+                }
 
-                    // let's remove the event now
-                    let event = track.pop_front().unwrap();
-                    *ticks_since_last_update = 0;
-
-                    match event.kind {
-                        OwnedTrackEventKind::ToSynth(event_bytes) => {
-                            connection.send(&event_bytes).unwrap();
-                        }
-
-                        OwnedTrackEventKind::Tempo(tempo) => {
-                            self.microseconds_per_tick =
-                                u32::from(tempo) as f64 / self.ticks_per_beat as f64;
-                        }
-
-                        OwnedTrackEventKind::InessentialMeta => {}
+                MidiFileFormat::Parallel => {
+                    for track_id in 0..self.tracks.len() {
+                        self.update_track(track_id, connection);
                     }
                 }
             }
@@ -247,6 +268,13 @@ impl MidiPlayer {
 
         // Don't suddenly jump ahead when unpausing.
         self.last_update_time = Instant::now();
+    }
+
+    pub fn is_finished(&self) -> bool {
+        match &self.maybe_midi_file {
+            Some(midi_file) => midi_file.is_finished(),
+            None => true,
+        }
     }
 
     pub fn update(&mut self) {
