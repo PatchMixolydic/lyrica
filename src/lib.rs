@@ -27,7 +27,7 @@ use midly::{
     num::{u24, u28, u4, u7},
     MetaMessage, MidiMessage, Smf, Timing, TrackEvent, TrackEventKind,
 };
-use std::{collections::VecDeque, time::Instant, vec};
+use std::{collections::VecDeque, time::Instant};
 
 pub use midir::{MidiOutput, MidiOutputConnection, MidiOutputPort};
 
@@ -100,6 +100,12 @@ impl<'file> From<TrackEvent<'file>> for OwnedTrackEvent {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+struct TrackProgress {
+    ticks_since_last_update: u32,
+    next_event: usize,
+}
+
 /// Sends an [All Sound Off](http://midi.teragonaudio.com/tech/midispec/ntnoff.htm)
 /// message to all channels.
 fn all_sound_off(connection: &mut MidiOutputConnection) {
@@ -127,7 +133,7 @@ pub struct MidiFile {
     timer: f64,
     format: MidiFileFormat,
     tracks: Vec<VecDeque<OwnedTrackEvent>>,
-    ticks_since_last_update: Vec<u32>,
+    progress: Vec<TrackProgress>,
     paused: bool,
 }
 
@@ -152,7 +158,7 @@ impl MidiFile {
             .map(|track| track.into_iter().map(OwnedTrackEvent::from).collect())
             .collect();
 
-        let ticks_since_last_update = vec![0; tracks.len()];
+        let progress = vec![Default::default(); tracks.len()];
 
         Self {
             ticks_per_beat,
@@ -160,7 +166,7 @@ impl MidiFile {
             timer: 0.0,
             format: parsed_file.header.format.into(),
             tracks,
-            ticks_since_last_update,
+            progress,
             paused: false,
         }
     }
@@ -176,31 +182,39 @@ impl MidiFile {
     pub fn is_finished(&self) -> bool {
         match self.format {
             MidiFileFormat::Sequential { current } => self.tracks.len() <= current,
-            MidiFileFormat::Parallel => self.tracks.iter().all(|track| track.is_empty()),
+
+            MidiFileFormat::Parallel => self
+                .tracks
+                .iter()
+                .zip(self.progress.iter())
+                .all(|(track, progress)| progress.next_event >= track.len()),
         }
     }
 
     fn update_track(&mut self, track_id: usize, connection: &mut MidiOutputConnection) {
-        self.ticks_since_last_update[track_id] += 1;
+        let track = &self.tracks[track_id];
+        let progress = &mut self.progress[track_id];
+        progress.ticks_since_last_update += 1;
 
-        while let Some(event) = self.tracks[track_id].front() {
-            if event.delta > self.ticks_since_last_update[track_id] {
+        while progress.next_event < track.len() {
+            let event = &track[progress.next_event];
+            if event.delta > progress.ticks_since_last_update {
                 // Not ready to proceed yet
                 break;
             }
 
-            // let's remove the event now
-            let event = self.tracks[track_id].pop_front().unwrap();
-            self.ticks_since_last_update[track_id] = 0;
+            // update!
+            progress.ticks_since_last_update = 0;
+            progress.next_event += 1;
 
-            match event.kind {
+            match &event.kind {
                 OwnedTrackEventKind::ToSynth(event_bytes) => {
-                    connection.send(&event_bytes).unwrap();
+                    connection.send(event_bytes).unwrap();
                 }
 
                 OwnedTrackEventKind::Tempo(tempo) => {
                     self.microseconds_per_tick =
-                        u32::from(tempo) as f64 / self.ticks_per_beat as f64;
+                        u32::from(*tempo) as f64 / self.ticks_per_beat as f64;
                 }
 
                 OwnedTrackEventKind::InessentialMeta => {}
