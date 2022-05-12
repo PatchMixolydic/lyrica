@@ -131,6 +131,7 @@ pub struct MidiFile {
     // borrowed for life from `nodi`
     microseconds_per_tick: f64,
     timer: f64,
+    loop_point: Option<f64>,
     format: MidiFileFormat,
     tracks: Vec<VecDeque<OwnedTrackEvent>>,
     progress: Vec<TrackProgress>,
@@ -164,6 +165,7 @@ impl MidiFile {
             ticks_per_beat,
             microseconds_per_tick: 0.0,
             timer: 0.0,
+            loop_point: None,
             format: parsed_file.header.format.into(),
             tracks,
             progress,
@@ -179,7 +181,13 @@ impl MidiFile {
         }
     }
 
-    pub fn is_finished(&self) -> bool {
+    // TODO: is passing `None` here useful?
+    pub fn set_loop_point(&mut self, loop_point: Option<f64>) {
+        self.loop_point = loop_point;
+    }
+
+    /// Like [`Self::is_finished`], but ignores the loop point.
+    fn at_end_of_track(&self) -> bool {
         match self.format {
             MidiFileFormat::Sequential { current } => self.tracks.len() <= current,
 
@@ -188,6 +196,38 @@ impl MidiFile {
                 .iter()
                 .zip(self.progress.iter())
                 .all(|(track, progress)| progress.next_event >= track.len()),
+        }
+    }
+
+    pub fn is_finished(&self) -> bool {
+        if self.loop_point.is_some() {
+            return false;
+        }
+
+        self.at_end_of_track()
+    }
+
+    /// Seek to the given time in seconds.
+    pub fn seek_to(&mut self, seconds: f64, connection: &mut MidiOutputConnection) {
+        all_sound_off(connection);
+        let loop_point_in_ticks = (seconds * 1_000_000.0 / self.microseconds_per_tick) as u32;
+
+        for track_id in 0..self.tracks.len() {
+            let mut cumulative_delta = 0;
+
+            for (i, event) in self.tracks[track_id].iter().enumerate() {
+                if cumulative_delta + event.delta.as_int() > loop_point_in_ticks {
+                    self.progress[track_id].next_event = i;
+                    break;
+                }
+
+                cumulative_delta += event.delta.as_int();
+            }
+
+            // `cumulative_delta` is the time needed to get to the event before
+            // `self.progress[track_id].next_event` in ticks.
+            self.progress[track_id].ticks_since_last_update =
+                loop_point_in_ticks.saturating_sub(cumulative_delta);
         }
     }
 
@@ -218,6 +258,12 @@ impl MidiFile {
                 }
 
                 OwnedTrackEventKind::InessentialMeta => {}
+            }
+        }
+
+        if self.at_end_of_track() {
+            if let Some(loop_point) = self.loop_point {
+                self.seek_to(loop_point, connection);
             }
         }
     }
@@ -294,6 +340,20 @@ impl MidiPlayer {
         match &self.maybe_midi_file {
             Some(midi_file) => midi_file.is_finished(),
             None => true,
+        }
+    }
+
+    /// Sets the current MIDI file to loop at the given time in seconds.
+    pub fn set_loop_point(&mut self, loop_point: Option<f64>) {
+        if let Some(midi_file) = &mut self.maybe_midi_file {
+            midi_file.set_loop_point(loop_point);
+        }
+    }
+
+    /// Seek to the given time in seconds.
+    pub fn seek_to(&mut self, seconds: f64) {
+        if let Some(midi_file) = &mut self.maybe_midi_file {
+            midi_file.seek_to(seconds, &mut self.connection);
         }
     }
 
