@@ -22,6 +22,7 @@
 
 #![warn(clippy::single_char_lifetime_names)]
 
+mod events;
 pub mod file;
 pub mod player;
 
