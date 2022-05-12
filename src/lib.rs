@@ -215,7 +215,6 @@ impl MidiFile {
 
         self.timer += delta_time;
 
-        // TODO: assumes `format` is `Parallel`
         while self.timer > self.microseconds_per_tick {
             match self.format {
                 MidiFileFormat::Sequential { current } => {
